@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Socket.IO Client Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .connected { background: #d4edda; color: #155724; }
+        .disconnected { background: #f8d7da; color: #721c24; }
+        .message { background: #d1ecf1; color: #0c5460; }
+        button { padding: 10px 15px; margin: 5px; border: none; border-radius: 5px; cursor: pointer; }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        #log { height: 400px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; background: #f8f9fa; }
+        .code-item { background: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; margin: 5px 0; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <h1>🚀 Socket.IO VPS Test Client</h1>
+    
+    <div class="status disconnected" id="status">Disconnected</div>
+    
+    <div>
+        <input type="text" id="username" placeholder="Username" value="testuser">
+        <button class="btn-primary" onclick="connect()">Connect</button>
+        <button class="btn-danger" onclick="disconnect()">Disconnect</button>
+        <button class="btn-success" onclick="sendPing()">Send Ping</button>
+    </div>
+    
+    <div>
+        <input type="text" id="testCode" placeholder="Test Code" value="TESTCODE123">
+        <button class="btn-success" onclick="claimCode()">Claim Code</button>
+    </div>
+    
+    <h3>📊 Real-time Log</h3>
+    <div id="log"></div>
+    
+    <h3>🎯 Received Codes</h3>
+    <div id="codes"></div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        let socket = null;
+        const logDiv = document.getElementById('log');
+        const statusDiv = document.getElementById('status');
+        const codesDiv = document.getElementById('codes');
+        
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `<div class="${type}">[${timestamp}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function updateStatus(connected) {
+            if (connected) {
+                statusDiv.className = 'status connected';
+                statusDiv.textContent = 'Connected ✅';
+            } else {
+                statusDiv.className = 'status disconnected';
+                statusDiv.textContent = 'Disconnected ❌';
+            }
+        }
+        
+        function connect() {
+            const username = document.getElementById('username').value;
+            
+            if (!username) {
+                alert('Please enter a username');
+                return;
+            }
+            
+            // Use current domain for VPS testing, localhost for development
+            const socketUrl = window.location.protocol === 'https:' ? 
+                `wss://${window.location.hostname}` : 
+                `http://${window.location.hostname}:3001`;
+            
+            log(`Connecting to: ${socketUrl}`);
+            
+            socket = io(socketUrl, {
+                query: { userId: username },
+                transports: ['websocket', 'polling']
+            });
+            
+            socket.on('connect', () => {
+                log('✅ Connected to Socket.IO server', 'connected');
+                updateStatus(true);
+                
+                // Authenticate immediately
+                socket.emit('authenticate', { username: username });
+            });
+            
+            socket.on('disconnect', (reason) => {
+                log(`❌ Disconnected: ${reason}`, 'disconnected');
+                updateStatus(false);
+            });
+            
+            socket.on('welcome', (data) => {
+                log(`🎉 Welcome message: Server ${data.server_id}, Redis: ${data.redis_enabled}`, 'message');
+            });
+            
+            socket.on('authenticated', (data) => {
+                log(`🔐 Authenticated as: ${data.username}`, 'connected');
+            });
+            
+            socket.on('bonus_code', (data) => {
+                log(`🎯 New code received: ${data.code} (Value: ${data.value || 'Unknown'})`, 'message');
+                
+                const codeElement = document.createElement('div');
+                codeElement.className = 'code-item';
+                codeElement.innerHTML = `
+                    <strong>Code:</strong> ${data.code}<br>
+                    <strong>Value:</strong> ${data.value || 'Unknown'}<br>
+                    <strong>Time:</strong> ${new Date(data.broadcast_time).toLocaleTimeString()}<br>
+                    <strong>Server:</strong> ${data.server_id}
+                `;
+                codesDiv.insertBefore(codeElement, codesDiv.firstChild);
+            });
+            
+            socket.on('recent_codes', (data) => {
+                log(`📋 Received ${data.count} recent codes`, 'message');
+                data.codes.forEach(code => {
+                    const codeElement = document.createElement('div');
+                    codeElement.className = 'code-item';
+                    codeElement.innerHTML = `
+                        <strong>Code:</strong> ${code.code}<br>
+                        <strong>Value:</strong> ${code.value || 'Unknown'}<br>
+                        <strong>Time:</strong> ${new Date(code.ts).toLocaleTimeString()} (Recent)
+                    `;
+                    codesDiv.appendChild(codeElement);
+                });
+            });
+            
+            socket.on('code_claimed', (data) => {
+                log(`⚡ Code ${data.code} claimed by ${data.claimed_by}`, 'message');
+            });
+            
+            socket.on('error', (error) => {
+                log(`❌ Error: ${error.message}`, 'error');
+            });
+            
+            // Heartbeat implementation
+            setInterval(() => {
+                if (socket && socket.connected) {
+                    socket.emit('ping', (response) => {
+                        const latency = Date.now() - response.server_time;
+                        log(`💓 Ping: ${latency}ms`, 'info');
+                    });
+                }
+            }, 30000); // Every 30 seconds
+        }
+        
+        function disconnect() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
+        }
+        
+        function sendPing() {
+            if (socket && socket.connected) {
+                socket.emit('ping', (response) => {
+                    const latency = Date.now() - response.server_time;
+                    log(`💓 Manual ping: ${latency}ms from server ${response.server_id}`, 'message');
+                });
+            } else {
+                log('❌ Not connected', 'error');
+            }
+        }
+        
+        function claimCode() {
+            const code = document.getElementById('testCode').value;
+            
+            if (!socket || !socket.connected) {
+                log('❌ Not connected', 'error');
+                return;
+            }
+            
+            if (!code) {
+                log('❌ Enter a test code', 'error');
+                return;
+            }
+            
+            socket.emit('claim_code', { 
+                code: code,
+                auto_claim: false 
+            });
+            
+            log(`🎯 Claiming code: ${code}`, 'message');
+        }
+        
+        // Auto-connect for testing
+        window.onload = () => {
+            log('🔧 Socket.IO VPS Test Client Ready');
+            log('Click "Connect" to test the WebSocket connection');
+        };
+    </script>
+</body>
+</html>
